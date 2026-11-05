@@ -136,7 +136,7 @@ table.heat tbody tr { cursor: pointer; }
 table.heat tbody tr:hover td:first-child { color: var(--accent); }
 table.heat tr.ref td { background: var(--sunken); }
 table.heat tr.ref td:first-child { background: var(--sunken); }
-.nm { font-weight: 600; display: block; max-width: 210px; overflow: hidden; text-overflow: ellipsis; }
+.nm { font-weight: 600; display: block; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
 .tk { color: var(--muted); font-size: 11.5px; font-weight: 400; }
 .pill { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 2px 7px; border-radius: 999px; }
 .pill.up { background: color-mix(in srgb, var(--pos) 14%, transparent); }
@@ -171,6 +171,16 @@ table.heat tr.ref td:first-child { background: var(--sunken); }
 .chart-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .chart-head h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
 .note { color: var(--muted); font-size: 11.5px; }
+.sub2 { display: block; font-size: 11px; font-weight: 500; color: var(--muted); }
+table.heat.fondos { min-width: 820px; }
+.fgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 16px; }
+.fcard { text-align: left; cursor: pointer; font: inherit; color: inherit; }
+.fcard:hover { border-color: var(--accent); }
+.fcard svg { width: 100%; height: auto; display: block; }
+.fcard-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.fcard-head h3 { margin: 0; font-size: 14px; }
+.fcard-num { text-align: right; flex: none; }
+.fcard-num b { font-size: 17px; display: block; }
 footer { color: var(--muted); font-size: 12px; padding-block: 0 32px; }
 footer p { margin: 4px 0; max-width: 90ch; }
 
@@ -461,15 +471,16 @@ function renderResumen() {
 
 function renderGroup(g) {
   const pid = state.period;
+  const nm = t => (g.nombres && g.nombres[t]) || D.meta[t].nombre;
   const sortKey = state.sort || pid;
   const rows = g.valores.map(t => ({ t, m: metrics(t) })).filter(x => x.m);
   const val = x => sortKey === "vs200" ? x.m.vs200 : sortKey === "nombre" ? null : x.m.r[sortKey];
   const sign = state.dir === -1 ? 1 : -1;
-  if (sortKey === "nombre") rows.sort((a, b) => sign * D.meta[a.t].nombre.localeCompare(D.meta[b.t].nombre, "es"));
+  if (sortKey === "nombre") rows.sort((a, b) => sign * nm(a.t).localeCompare(nm(b.t), "es"));
   else rows.sort((a, b) => sign * ((val(b) ?? -1e9) - (val(a) ?? -1e9)));
   const th = (key, label) => `<th ${sortKey === key ? `aria-sort="${state.dir === -1 ? "descending" : "ascending"}"` : ""}><button type="button" data-sort="${key}">${label}${sortKey === key ? (state.dir === -1 ? " ↓" : " ↑") : ""}</button></th>`;
   const row = (t, m, cls = "") => `<tr class="${cls}" data-t="${esc(t)}" tabindex="0">
-      <td><span class="c"><span class="nm">${esc(D.meta[t].nombre)}</span><span class="tk">${esc(t)}${cls ? " · referencia" : ""}</span></span></td>
+      <td><span class="c"><span class="nm">${esc(nm(t).split(" · ")[0])}</span><span class="tk">${nm(t).includes(" · ") ? esc(nm(t).split(" · ").slice(1).join(" · ")) + " · " : ""}${esc(t)}${cls ? " · referencia" : ""}</span></span></td>
       <td><span class="c">${spark(t, 63, 96, 26)}</span></td>
       <td><span class="c">${fmtLevel(t, m.last)}</span></td>
       ${PERIODS.map(p => `<td class="hm"><span class="c" style="${heat(t, m.r[p.id], p.id)}">${fmtChange(t, m.r[p.id])}</span></td>`).join("")}
@@ -478,10 +489,76 @@ function renderGroup(g) {
   const refRow = g.ref && metrics(g.ref) ? row(g.ref, metrics(g.ref), "ref") : "";
   const table = `<div class="panel table-wrap"><table class="heat"><thead><tr>${th("nombre", "Activo")}<th>3 meses</th><th>Último</th>${PERIODS.map(p => th(p.id, p.label)).join("")}${th("vs200", "vs MM200")}</tr></thead><tbody>${refRow}${rows.map(x => row(x.t, x.m)).join("")}</tbody></table></div>`;
   const rrg = g.ref ? `<div class="panel rrg-card"><div><h3 style="margin:0;font-size:14px">Mapa de rotación</h3><p class="sub" style="margin:2px 0 0">Frente a ${esc(D.meta[g.ref]?.nombre || g.ref)}. Cada punto es la posición actual; la cola, las 4 semanas anteriores.</p></div>${rrgChart(g)}</div>` : "";
-  const brows = rows.filter(x => !isYield(x.t)).map(x => ({ t: x.t, label: D.meta[x.t].nombre, v: x.m.r[pid] })).sort((a, b) => (b.v ?? -1e9) - (a.v ?? -1e9));
+  const brows = rows.filter(x => !isYield(x.t)).map(x => ({ t: x.t, label: nm(x.t).split(" · ").pop(), v: x.m.r[pid] })).sort((a, b) => (b.v ?? -1e9) - (a.v ?? -1e9));
   const refV = g.ref ? metrics(g.ref)?.r[pid] : null;
-  const bars = `<div class="panel card"><div><h3>Ranking ${esc(PNAME[pid])}</h3><p class="sub">${g.ref ? `La línea vertical marca ${esc(D.meta[g.ref]?.nombre || g.ref)} (${fmtChange(g.ref, refV)}).` : "Variación en porcentaje. Las rentabilidades de los bonos están en la tabla, en puntos básicos."}</p></div>${divBars(brows, g.ref ? refV : null, pid)}</div>`;
-  view.innerHTML = `<section class="block"><div class="block-head"><div><h2>${esc(g.nombre)}</h2><p class="sub">Toca una columna para ordenar y una fila para abrir el gráfico.</p></div>${periodPicker()}</div><div class="group-grid">${table}<div class="grid2">${rrg}${bars}</div></div></section>`;
+  const bars = `<div class="panel card"><div><h3>Ranking ${esc(PNAME[pid])}</h3><p class="sub">${g.ref ? `La línea vertical marca ${esc(D.meta[g.ref]?.nombre || g.ref)} (${fmtChange(g.ref, refV)}).` : g.valores.some(isYield) ? "Variación en porcentaje. Las rentabilidades de los bonos están en la tabla, en puntos básicos." : "Variación en porcentaje."}</p></div>${divBars(brows, g.ref ? refV : null, pid)}</div>`;
+  view.innerHTML = `<section class="block"><div class="block-head"><div><h2>${esc(g.nombre)}</h2><p class="sub">${g.nota ? esc(g.nota) + " " : ""}Toca una columna para ordenar y una fila para abrir el gráfico.</p></div>${periodPicker()}</div><div class="group-grid">${table}<div class="grid2">${rrg}${bars}</div></div></section>`;
+}
+
+
+/* ---------- fondos frente a su índice ---------- */
+const DIFF_CAP = { "1d": 0.5, "1s": 1, "1m": 2, "3m": 4, "ytd": 6, "1a": 8 };
+function fundOf(t) { for (const g of D.grupos) for (const fd of (g.fondos || [])) if (fd.t === t) return fd; return null; }
+function aligned(a, b) {
+  const A = D.series[a], B = D.series[b]; if (!A || !B) return null;
+  const mb = new Map(B.f.map((d, i) => [d, B.c[i]]));
+  const f = [], x = [], y = [];
+  A.f.forEach((d, i) => { const v = mb.get(d); if (v != null) { f.push(d); x.push(A.c[i]); y.push(v); } });
+  return f.length > 2 ? { f, x, y } : null;
+}
+function baseIndex(f, pid) {
+  const L = f.length - 1, p = PERIODS.find(q => q.id === pid);
+  if (p.n) return L - p.n >= 0 ? L - p.n : null;
+  const yr = f[L].slice(0, 4);
+  for (let i = L; i >= 0; i--) if (f[i].slice(0, 4) < yr) return i;
+  return null;
+}
+function fundRow(fd) {
+  const al = aligned(fd.t, fd.ref); if (!al) return null;
+  const L = al.f.length - 1, r = {};
+  for (const p of PERIODS) {
+    const i = baseIndex(al.f, p.id);
+    r[p.id] = i == null ? null : { f: (al.x[L] / al.x[i] - 1) * 100, b: (al.y[L] / al.y[i] - 1) * 100 };
+    if (r[p.id]) r[p.id].d = r[p.id].f - r[p.id].b;
+  }
+  return { fd, al, r, last: al.x[L], date: al.f[L] };
+}
+const pp = v => v == null || isNaN(v) ? "–" : (v > 0 ? "+" : "") + nf(v, Math.abs(v) < 10 ? 2 : 1) + " pp";
+function heatDiff(v, pid) {
+  if (v == null || isNaN(v)) return "";
+  const k = Math.min(1, Math.abs(v) / DIFF_CAP[pid]);
+  return `background:color-mix(in srgb, var(${v >= 0 ? "--pos" : "--neg"}) ${Math.round(6 + k * 46)}%, var(--surface))`;
+}
+function renderFondos(g) {
+  const pid = state.period;
+  const rows = g.fondos.map(fundRow).filter(Boolean);
+  const sortKey = state.sort && state.sort !== "nombre" && state.sort !== "vs200" ? state.sort : pid;
+  const sign = state.dir === -1 ? 1 : -1;
+  rows.sort((a, b) => sign * ((b.r[sortKey]?.d ?? -1e9) - (a.r[sortKey]?.d ?? -1e9)));
+  const th = (key, label) => `<th ${sortKey === key ? `aria-sort="${state.dir === -1 ? "descending" : "ascending"}"` : ""}><button type="button" data-sort="${key}">${label}${sortKey === key ? (state.dir === -1 ? " ↓" : " ↑") : ""}</button></th>`;
+  const table = `<div class="panel table-wrap"><table class="heat fondos"><thead><tr><th>Fondo</th><th>3 meses</th><th>VL</th>${PERIODS.map(p => th(p.id, p.label)).join("")}</tr></thead><tbody>${rows.map(x => `
+    <tr data-t="${esc(x.fd.t)}" tabindex="0">
+      <td><span class="c"><span class="nm">${esc(x.fd.nombre)}</span><span class="tk" style="display:block">${esc(x.fd.clase)} · ${esc(x.fd.isin)}</span><span class="tk" style="display:block">vs ${esc(x.fd.indice)}</span></span></td>
+      <td><span class="c">${spark(x.fd.t, 63, 96, 26)}</span></td>
+      <td><span class="c">${fmtLevel(x.fd.t, x.last)}<span class="tk" style="display:block">${esc(new Date(x.date + "T12:00:00Z").toLocaleDateString("es-ES", { day: "numeric", month: "short", timeZone: "UTC" }))}</span></span></td>
+      ${PERIODS.map(p => { const c = x.r[p.id]; return `<td class="hm"><span class="c" style="${c ? heatDiff(c.d, p.id) : ""}">${c ? `${fmtChange("", c.f)}<span class="sub2">índ. ${fmtChange("", c.b)}</span>` : "–"}</span></td>`; }).join("")}
+    </tr>`).join("")}</tbody></table></div>`;
+
+  const cards = rows.map(x => {
+    const i0 = Math.min(baseIndex(x.al.f, pid) ?? 0, x.al.f.length - 22);
+    const start = Math.max(0, i0), f = x.al.f.slice(start);
+    const nx = x.al.x.slice(start).map(v => v / x.al.x[start] * 100), ny = x.al.y.slice(start).map(v => v / x.al.y[start] * 100);
+    const c = x.r[pid];
+    return `<button type="button" class="panel card fcard" data-t="${esc(x.fd.t)}">
+      <div class="fcard-head"><div><h3>${esc(x.fd.nombre)}</h3><p class="sub">${esc(x.fd.clase)} · ${PNAME[pid]}${(baseIndex(x.al.f, pid) ?? 0) > x.al.f.length - 22 ? " · gráfico de 1 mes" : ""}</p></div>
+        <div class="fcard-num"><b class="${dir(c?.d)}">${pp(c?.d)}</b><span class="sub">vs índice</span></div></div>
+      ${lineChart(f, [{ v: nx, color: "var(--accent)", width: 1.8 }, { v: ny, color: "var(--muted)", width: 1.4, dash: "4 3" }], { base: 100, h: 170, label: "Fondo frente a índice", fmt: v => nf(v, 0) })}
+      <div class="legend"><span><i style="background:var(--accent)"></i>Fondo ${c ? fmtChange("", c.f) : "–"}</span><span><i style="background:var(--muted)"></i>${esc(x.fd.proxy || x.fd.indice)} ${c ? fmtChange("", c.b) : "–"}</span></div>
+    </button>`;
+  }).join("");
+
+  view.innerHTML = `<section class="block"><div class="block-head"><div><h2>${esc(g.nombre)}</h2><p class="sub">${esc(g.nota || "")} El color indica si el fondo lo hace mejor o peor que su índice en cada periodo; debajo, la rentabilidad del índice. El VL se publica con un día de retraso y se compara con el índice a la misma fecha.</p></div>${periodPicker()}</div>
+    <div class="group-grid">${table}<div class="fgrid">${cards}</div></div></section>`;
 }
 
 /* ---------- ficha ---------- */
@@ -500,20 +577,22 @@ function openSheet(t) {
     { v: sm(50), color: "var(--warn)", width: 1.2 },
     { v: sm(200), color: "var(--muted)", width: 1.2, dash: "4 3" },
   ], { area: true, label: "Precio", fmt: isYield(t) ? v => nf(v, 2) + "%" : null });
-  const g = groupOf(t);
+  const g = groupOf(t), fd = fundOf(t);
+  const refT = fd ? fd.ref : g && g.ref;
+  const refName = fd ? (fd.proxy || fd.indice) : refT && (D.meta[refT]?.nombre || refT);
   let rel = "";
-  if (g && g.ref && g.ref !== t) {
-    const rs = relSeries(t, g.ref);
+  if (refT && refT !== t) {
+    const rs = relSeries(t, refT);
     if (rs && rs.r.length > 2) {
       const k = Math.min(n, rs.r.length), rr = rs.r.slice(-k), b = rr[0];
       const v = rr.map(x => x / b * 100), last = v[v.length - 1];
-      rel = `<div class="chart-card"><div class="chart-head"><h3>Fuerza relativa frente a ${esc(D.meta[g.ref]?.nombre || g.ref)}</h3><span class="note">Base 100 · ${last >= 100 ? "lo hace mejor" : "lo hace peor"} (${fmtChange("", last - 100)})</span></div>${lineChart(rs.f.slice(-k), [{ v, color: last >= 100 ? "var(--pos)" : "var(--neg)", width: 1.8 }], { base: 100, h: 170, label: "Fuerza relativa", fmt: x => nf(x, 0) })}</div>`;
+      rel = `<div class="chart-card"><div class="chart-head"><h3>${fd ? "Fondo frente a su índice" : "Fuerza relativa frente a " + esc(refName)}</h3><span class="note">Base 100 · ${last >= 100 ? "lo hace mejor" : "lo hace peor"} (${fmtChange("", last - 100)})</span></div>${lineChart(rs.f.slice(-k), [{ v, color: last >= 100 ? "var(--pos)" : "var(--neg)", width: 1.8 }], { base: 100, h: 170, label: "Fuerza relativa", fmt: x => nf(x, 0) })}</div>`;
     }
   }
   const ranges = [[63, "3M"], [126, "6M"], [252, "1A"], [504, "2A"]];
   sheetRoot.innerHTML = `<div class="sheet-back" data-close></div>
     <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
-      <div class="sheet-head"><div><p class="eyebrow">${esc(t)}${g ? " · " + esc(g.nombre) : ""}</p><h2 id="sheet-title">${esc(D.meta[t].nombre)}</h2>
+      <div class="sheet-head"><div><p class="eyebrow">${fd ? esc(fd.clase) + " · " + esc(fd.isin) + " · vs " + esc(refName) : esc(t) + (g ? " · " + esc(g.nombre) : "")}</p><h2 id="sheet-title">${esc(fd ? fd.nombre : D.meta[t].nombre)}</h2>
         <p class="sub" style="font-size:14px"><b style="color:var(--ink);font-size:18px">${fmtLevel(t, m.last)}</b> <span class="${dir(m.r["1d"])}" style="font-weight:600">${fmtChange(t, m.r["1d"])}</span> · cierre ${esc(fdate(m.date))}</p></div>
         <button type="button" class="close" data-close aria-label="Cerrar">×</button></div>
       <div class="kv">${PERIODS.map(p => `<div><span>${p.label}</span><b class="${dir(m.r[p.id])}">${fmtChange(t, m.r[p.id])}</b></div>`).join("")}
@@ -537,7 +616,7 @@ function current() { const h = location.hash.slice(1); return D.grupos.find(g =>
 function render() {
   const g = current();
   document.getElementById("tabs").innerHTML = D.grupos.map(x => `<a href="#${x.id}" ${x.id === g.id ? 'aria-current="page"' : ""}>${esc(x.nombre)}</a>`).join("");
-  if (g.id === "resumen") renderResumen(); else renderGroup(g);
+  if (g.id === "resumen") renderResumen(); else if (g.fondos && g.fondos.length) renderFondos(g); else renderGroup(g);
 }
 function header() {
   const ref = D.series["SPY"] ? "SPY" : Object.keys(D.series)[0];

@@ -50,6 +50,38 @@ UNIVERSO = [
         ],
     },
     {
+        "id": "fondos-ft",
+        "nombre": "Fondos FT",
+        "ref": None,
+        "nota": "Valor liquidativo de la clase institucional frente a su índice de referencia "
+                "(franklintempleton.com.es), medido con un ETF que lo replica.",
+        # Cada fondo: ticker de Yahoo del VL, nombre, clase, ISIN, ticker del índice,
+        # nombre del índice oficial y, si el ETF no replica exactamente ese índice, qué replica.
+        "fondos": [
+            {"t": "0P0000OQVK.F", "nombre": "Putnam US Research", "clase": "PR EUR Acc",
+             "isin": "IE00B241FQ36", "ref": "SXR8.DE", "indice": "S&P 500 NR",
+             "proxy": None},
+            {"t": "0P0000G0R3.F", "nombre": "Franklin Technology", "clase": "I (acc) EUR",
+             "isin": "LU0366762994", "ref": "XDWT.DE",
+             "indice": "MSCI ACWI IT + Communication Services 10/40 NR",
+             "proxy": "MSCI World IT (índice secundario del fondo)"},
+            {"t": "0P000199LG.F", "nombre": "ClearBridge Infrastructure Value", "clase": "PR EUR Acc",
+             "isin": "IE00BD4GV124", "ref": "IQQI.DE",
+             "indice": "FTSE Global Core Infrastructure 50/50 NR",
+             "proxy": "FTSE Global Core Infrastructure (sin el 50/50)"},
+            {"t": "0P0000O30I", "nombre": "Franklin Gold and Precious Metals", "clase": "I (acc) USD",
+             "isin": "LU0496368654", "ref": "GDX", "indice": "FTSE Gold Mines",
+             "proxy": "NYSE Arca Gold Miners (GDX)"},
+            {"t": "0P000125XH.F", "nombre": "Franklin Euro Short Duration", "clase": "I (acc) EUR",
+             "isin": "LU1022658824", "ref": "IBGS.AS", "indice": "Bloomberg Euro Aggregate 1-3 años",
+             "proxy": "Deuda pública euro 1-3 años"},
+            {"t": "0P00000YQE.F", "nombre": "Franklin European Total Return", "clase": "I (acc) EUR",
+             "isin": "LU0195952774", "ref": "SYBA.DE", "indice": "Bloomberg Euro Aggregate",
+             "proxy": None},
+        ],
+        "valores": [],
+    },
+    {
         "id": "sectores-eeuu",
         "nombre": "Sectores EE. UU.",
         "ref": "SPY",
@@ -186,6 +218,9 @@ def tickers_necesarios() -> tuple[list[str], dict]:
     for g in UNIVERSO:
         if g.get("ref"):
             meta.setdefault(g["ref"], {"nombre": g.get("refNombre", g["ref"]), "tipo": "precio"})
+        for f in g.get("fondos", []):
+            meta.setdefault(f["t"], {"nombre": f"{f['nombre']} {f['clase']}", "tipo": "precio"})
+            meta.setdefault(f["ref"], {"nombre": f["indice"], "tipo": "precio"})
         for v in g["valores"]:
             t, nombre = v[0], v[1]
             tipo = v[2] if len(v) > 2 else "precio"
@@ -248,8 +283,19 @@ def generar_demo(tickers: list[str], meta: dict) -> dict[str, list[tuple[str, fl
     rnd = random.Random(20261105)
     fechas = dias_habiles(date.today() - timedelta(days=1), 504)
     mercado = [rnd.gauss(0.0004, 0.009) for _ in fechas]
+    fondos = {f["t"]: f["ref"] for g in UNIVERSO for f in g.get("fondos", [])}
     series = {}
-    for t in tickers:
+    for t in [x for x in tickers if x not in fondos] + [x for x in tickers if x in fondos]:
+        if t in fondos and fondos[t] in series:
+            base, nivel, pts = series[fondos[t]], rnd.uniform(20, 150), []
+            alfa = rnd.gauss(0, 0.0002)
+            for i, (f, v) in enumerate(base):
+                if i:
+                    r = math.log(v / base[i - 1][1]) + alfa + rnd.gauss(0, 0.002)
+                    nivel *= math.exp(r)
+                pts.append((f, round(nivel, 4)))
+            series[t] = pts[:-1]  # el VL llega con un día de retraso
+            continue
         tipo = meta[t]["tipo"]
         beta = rnd.uniform(0.5, 1.5)
         deriva = rnd.gauss(0.0, 0.0006)
@@ -279,7 +325,10 @@ def construir(series: dict, meta: dict, demo: bool) -> dict:
             "id": g["id"],
             "nombre": g["nombre"],
             "ref": g.get("ref"),
+            "nota": g.get("nota"),
             "valores": [v[0] for v in g["valores"] if v[0] in series],
+            "nombres": {v[0]: v[1] for v in g["valores"]},
+            "fondos": [f for f in g.get("fondos", []) if f["t"] in series and f["ref"] in series],
         })
     return {
         "generado": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
