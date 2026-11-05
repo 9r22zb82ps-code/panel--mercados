@@ -298,18 +298,33 @@ DERIVADAS = [
 PROYECCIONES_FED = ("FEDTARMD", "FEDTARMDLR")  # medianas del FOMC por año y a largo plazo
 
 
-def _get(url: str) -> str:
+NAVEGADOR = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+
+
+def _get(url: str, timeout: int = 20) -> str:
     from urllib.request import Request, urlopen
-    req = Request(url, headers={"User-Agent": "panel-mercados/1.0"})
-    with urlopen(req, timeout=30) as r:
+    req = Request(url, headers={"User-Agent": NAVEGADOR, "Accept": "text/csv,*/*"})
+    with urlopen(req, timeout=timeout) as r:
         return r.read().decode("utf-8")
 
 
 def _fred(codigo: str, desde: str | None) -> list[tuple[str, float]]:
-    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={codigo}" + (f"&cosd={desde}" if desde else "")
-    filas = _get(url).strip().splitlines()[1:]
+    """FRED: API oficial si hay clave (secreto FRED_API_KEY), si no la descarga CSV pública."""
+    import os
+    clave = os.environ.get("FRED_API_KEY", "").strip()
     out = []
-    for fila in filas:
+    if clave:
+        url = (f"https://api.stlouisfed.org/fred/series/observations?series_id={codigo}"
+               f"&api_key={clave}&file_type=json" + (f"&observation_start={desde}" if desde else ""))
+        for o in json.loads(_get(url))["observations"]:
+            try:
+                out.append((o["date"], round(float(o["value"]), 4)))
+            except ValueError:
+                pass
+        return out
+    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={codigo}" + (f"&cosd={desde}" if desde else "")
+    for fila in _get(url).strip().splitlines()[1:]:
         f, _, v = fila.partition(",")
         try:
             out.append((f, round(float(v), 4)))
@@ -341,7 +356,11 @@ def derivar(series: dict) -> None:
 def descargar_tipos() -> tuple[dict, dict]:
     desde = (date.today() - timedelta(days=3 * 365)).isoformat()
     series = {}
+    fallos_fred = 0
     for clave, fuente, codigo, *_ in TIPOS:
+        if fuente == "fred" and fallos_fred >= 2:
+            print(f"  aviso: FRED no responde, se omite {clave}", file=sys.stderr)
+            continue
         try:
             datos = _fred(codigo, desde) if fuente == "fred" else _bce(codigo, desde)
             if datos:
@@ -350,9 +369,12 @@ def descargar_tipos() -> tuple[dict, dict]:
                 print(f"  aviso: sin datos para {clave} ({codigo})", file=sys.stderr)
         except Exception as e:  # una fuente caída no debe tumbar el panel
             print(f"  aviso: fallo al descargar {clave} ({codigo}): {e}", file=sys.stderr)
+            fallos_fred += fuente == "fred"
     derivar(series)
     proy = {}
     try:
+        if fallos_fred >= 2:
+            raise RuntimeError("FRED no responde")
         anio = date.today().year
         proy["anual"] = [(f[:4], v) for f, v in _fred(PROYECCIONES_FED[0], None) if int(f[:4]) >= anio]
         lr = _fred(PROYECCIONES_FED[1], None)
