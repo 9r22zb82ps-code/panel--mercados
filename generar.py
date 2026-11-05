@@ -295,6 +295,18 @@ DERIVADAS = [
     ("EUR2S10S", ("EUR10A", "EUR2A"), "Pendiente euro AAA 10a-2a", "spread", False),
     ("EUR_SOBERANO", ("EURTODOS10A", "EUR10A"), "Prima soberana euro 10a (todos vs AAA)", "spread", True),
 ]
+# Fuentes alternativas sin clave (se prueban antes que FRED, que bloquea a GitHub)
+ALTERNATIVAS = {
+    "FED_TECHO": ("nyfed", "targetRateTo"),
+    "FED_SUELO": ("nyfed", "targetRateFrom"),
+    "EFFR": ("nyfed", "percentRate"),
+    "UST1A": ("tesoro", "1 Yr"),
+    "UST2A": ("tesoro", "2 Yr"),
+    "UST10A": ("tesoro", "10 Yr"),
+    "BCE_DEPO": ("bce", "FM/D.U2.EUR.4F.KR.DFR.LEV"),
+    "ESTR": ("bce", "EST/B.EU000A2X2A25.WT"),
+}
+DERIVADAS.append(("US2S10S", ("UST10A", "UST2A"), "Pendiente EE. UU. 10a-2a", "spread", False))
 PROYECCIONES_FED = ("FEDTARMD", "FEDTARMDLR")  # medianas del FOMC por año y a largo plazo
 
 
@@ -346,9 +358,41 @@ def _bce(clave: str, desde: str) -> list[tuple[str, float]]:
     return out
 
 
+_cache: dict = {}
+
+
+def _nyfed(campo: str, desde: str) -> list[tuple[str, float]]:
+    if "nyfed" not in _cache:
+        url = ("https://markets.newyorkfed.org/api/rates/unsecured/effr/search.json"
+               f"?startDate={desde}&endDate={date.today().isoformat()}")
+        _cache["nyfed"] = json.loads(_get(url))["refRates"]
+    out = [(r["effectiveDate"], round(float(r[campo]), 4)) for r in _cache["nyfed"] if r.get(campo) not in (None, "")]
+    return sorted(out)
+
+
+def _tesoro(columna: str, desde: str) -> list[tuple[str, float]]:
+    import csv, io
+    if "tesoro" not in _cache:
+        filas = []
+        for anio in range(int(desde[:4]), date.today().year + 1):
+            url = ("https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
+                   f"daily-treasury-rates.csv/{anio}/all?type=daily_treasury_yield_curve"
+                   f"&field_tdr_date_value={anio}&page&_format=csv")
+            filas += list(csv.DictReader(io.StringIO(_get(url))))
+        _cache["tesoro"] = filas
+    out = []
+    for r in _cache["tesoro"]:
+        try:
+            m, d, y = r["Date"].split("/")
+            out.append((f"{y}-{m}-{d}", round(float(r[columna]), 4)))
+        except (KeyError, ValueError):
+            pass
+    return sorted(o for o in out if o[0] >= desde)
+
+
 def derivar(series: dict) -> None:
     for clave, (a, b), *_ in DERIVADAS:
-        if a in series and b in series:
+        if clave not in series and a in series and b in series:
             mb = dict(series[b])
             series[clave] = [(f, round(v - mb[f], 4)) for f, v in series[a] if f in mb]
 
@@ -358,6 +402,15 @@ def descargar_tipos() -> tuple[dict, dict]:
     series = {}
     fallos_fred = 0
     for clave, fuente, codigo, *_ in TIPOS:
+        if clave in ALTERNATIVAS:
+            alt, cod = ALTERNATIVAS[clave]
+            try:
+                datos = {"nyfed": _nyfed, "tesoro": _tesoro, "bce": _bce}[alt](cod, desde)
+                if datos:
+                    series[clave] = datos
+                    continue
+            except Exception as e:
+                print(f"  aviso: {alt} no disponible para {clave}: {e}", file=sys.stderr)
         if fuente == "fred" and fallos_fred >= 2:
             print(f"  aviso: FRED no responde, se omite {clave}", file=sys.stderr)
             continue
@@ -388,10 +441,13 @@ def descargar_tipos() -> tuple[dict, dict]:
 def meta_tipos() -> dict:
     meta = {}
     for clave, _, codigo, nombre, tipo, inv in TIPOS:
-        fuente = f"FRED · {codigo}" if codigo.isalnum() else "BCE · curva de tipos " + ("AAA" if "G_N_A" in codigo else "todos los ratings")
+        alt = ALTERNATIVAS.get(clave, (None,))[0]
+        fuente = {"nyfed": "Fed de Nueva York", "tesoro": "Tesoro de EE. UU.", "bce": "BCE"}.get(alt) or (
+            f"FRED · {codigo}" if codigo.isalnum() else "BCE · curva de tipos " + ("AAA" if "G_N_A" in codigo else "todos los ratings"))
         meta[clave] = {"nombre": nombre, "tipo": tipo, "inv": inv, "fuente": fuente}
     for clave, _, nombre, tipo, inv in DERIVADAS:
-        meta[clave] = {"nombre": nombre, "tipo": tipo, "inv": inv, "fuente": "Calculada con la curva del BCE"}
+        meta[clave] = {"nombre": nombre, "tipo": tipo, "inv": inv,
+                       "fuente": "Calculada con datos del Tesoro" if clave == "US2S10S" else "Calculada con la curva del BCE"}
     return meta
 
 

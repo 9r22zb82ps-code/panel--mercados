@@ -581,8 +581,10 @@ function renderTipos(g) {
     <div class="panel card"><div><h3>Diferenciales investment grade</h3><p class="sub">En puntos básicos, últimos 2 años.</p></div>${multiLine([{ t: "OAS_US_IG", color: "var(--accent)" }, { t: "OAS_EM", color: "var(--warn)" }, { t: "EUR_SOBERANO", color: "var(--muted)", dash: "4 3" }], 504, { h: 200, scale: 100, label: "Diferenciales investment grade", fmt: pb })}</div>
     <div class="panel card"><div><h3>Diferenciales high yield</h3><p class="sub">En puntos básicos, últimos 2 años.</p></div>${multiLine([{ t: "OAS_US_HY", color: "var(--neg)" }, { t: "OAS_EU_HY", color: "var(--accent)" }], 504, { h: 200, scale: 100, label: "Diferenciales high yield", fmt: pb })}</div>
   </div>`;
+  const sinCredito = !D.series.OAS_US_IG && !D.series.OAS_US_HY;
+  const aviso = sinCredito ? `<div class="panel card"><h3>Faltan los diferenciales de crédito</h3><p class="sub">Los diferenciales ICE BofA (IG y high yield de EE. UU. y Europa, emergentes) y las proyecciones del FOMC vienen de FRED, que exige una clave gratuita para descargar desde GitHub. En cuanto se añada como secreto <b>FRED_API_KEY</b> en el repositorio aparecerán aquí.</p></div>` : grafs;
   view.innerHTML = `<section class="block"><div class="block-head"><div><h2>Bancos centrales</h2><p class="sub">Tipo oficial y lo que descuenta el mercado: si la rentabilidad a 1 y 2 años está por debajo del tipo a un día, el mercado espera bajadas de tipos (y al revés). Es una lectura aproximada; incluye prima por plazo.</p></div></div><div class="grid2">${cards}</div></section>
-    <section class="block"><div class="block-head"><div><h2>Crédito, curvas y tipos</h2><p class="sub">Variaciones en puntos básicos. En crédito, verde es estrechamiento del diferencial y rojo ampliación. El percentil compara el nivel actual con todo el histórico disponible.</p></div>${periodPicker()}</div>${table}${grafs}</section>`;
+    <section class="block"><div class="block-head"><div><h2>Crédito, curvas y tipos</h2><p class="sub">Variaciones en puntos básicos. En crédito, verde es estrechamiento del diferencial y rojo ampliación. El percentil compara el nivel actual con todo el histórico disponible.</p></div>${periodPicker()}</div>${table}${aviso}</section>`;
 }
 
 /* ---------- fondos frente a su índice ---------- */
