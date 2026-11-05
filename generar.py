@@ -82,6 +82,12 @@ UNIVERSO = [
         "valores": [],
     },
     {
+        "id": "tipos",
+        "nombre": "Tipos y crédito",
+        "ref": None,
+        "valores": [],
+    },
+    {
         "id": "sectores-eeuu",
         "nombre": "Sectores EE. UU.",
         "ref": "SPY",
@@ -260,6 +266,138 @@ def descargar(tickers: list[str], periodo: str = "2y") -> dict[str, list[tuple[s
 
 
 # --------------------------------------------------------------------------
+# Tipos, curvas y diferenciales de crédito (FRED y Banco Central Europeo)
+# --------------------------------------------------------------------------
+# tipo: "tasa" = tipo de interés en %, "spread" = diferencial en % que se muestra en pb.
+# inv: True cuando una subida es mala noticia (diferenciales que se amplían).
+TIPOS = [
+    # clave interna, fuente, código, nombre, tipo, inv
+    ("FED_TECHO", "fred", "DFEDTARU", "Fed funds (techo del rango)", "tasa", False),
+    ("FED_SUELO", "fred", "DFEDTARL", "Fed funds (suelo del rango)", "tasa", False),
+    ("EFFR", "fred", "EFFR", "Fed funds efectivo", "tasa", False),
+    ("UST1A", "fred", "DGS1", "Treasury 1 año", "tasa", False),
+    ("UST2A", "fred", "DGS2", "Treasury 2 años", "tasa", False),
+    ("UST10A", "fred", "DGS10", "Treasury 10 años", "tasa", False),
+    ("US2S10S", "fred", "T10Y2Y", "Pendiente EE. UU. 10a-2a", "spread", False),
+    ("BCE_DEPO", "fred", "ECBDFR", "BCE facilidad de depósito", "tasa", False),
+    ("ESTR", "fred", "ECBESTRVOLWGTTRMDMNRT", "€STR", "tasa", False),
+    ("EUR1A", "bce", "YC/B.U2.EUR.4F.G_N_A.SV_C_YM.SR_1Y", "Deuda AAA euro 1 año", "tasa", False),
+    ("EUR2A", "bce", "YC/B.U2.EUR.4F.G_N_A.SV_C_YM.SR_2Y", "Deuda AAA euro 2 años", "tasa", False),
+    ("EUR10A", "bce", "YC/B.U2.EUR.4F.G_N_A.SV_C_YM.SR_10Y", "Deuda AAA euro 10 años", "tasa", False),
+    ("EURTODOS10A", "bce", "YC/B.U2.EUR.4F.G_N_C.SV_C_YM.SR_10Y", "Deuda euro 10 años (todos los ratings)", "tasa", False),
+    ("OAS_US_IG", "fred", "BAMLC0A0CM", "Crédito IG EE. UU.", "spread", True),
+    ("OAS_US_HY", "fred", "BAMLH0A0HYM2", "High yield EE. UU.", "spread", True),
+    ("OAS_EU_HY", "fred", "BAMLHE00EHYIOAS", "High yield euro", "spread", True),
+    ("OAS_EM", "fred", "BAMLEMCBPIOAS", "Crédito corporativo emergente", "spread", True),
+]
+# Series calculadas a partir de otras: clave, (a, b) -> a - b
+DERIVADAS = [
+    ("EUR2S10S", ("EUR10A", "EUR2A"), "Pendiente euro AAA 10a-2a", "spread", False),
+    ("EUR_SOBERANO", ("EURTODOS10A", "EUR10A"), "Prima soberana euro 10a (todos vs AAA)", "spread", True),
+]
+PROYECCIONES_FED = ("FEDTARMD", "FEDTARMDLR")  # medianas del FOMC por año y a largo plazo
+
+
+def _get(url: str) -> str:
+    from urllib.request import Request, urlopen
+    req = Request(url, headers={"User-Agent": "panel-mercados/1.0"})
+    with urlopen(req, timeout=30) as r:
+        return r.read().decode("utf-8")
+
+
+def _fred(codigo: str, desde: str | None) -> list[tuple[str, float]]:
+    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={codigo}" + (f"&cosd={desde}" if desde else "")
+    filas = _get(url).strip().splitlines()[1:]
+    out = []
+    for fila in filas:
+        f, _, v = fila.partition(",")
+        try:
+            out.append((f, round(float(v), 4)))
+        except ValueError:
+            pass  # días sin dato ('.')
+    return out
+
+
+def _bce(clave: str, desde: str) -> list[tuple[str, float]]:
+    flujo, _, serie = clave.partition("/")
+    url = f"https://data-api.ecb.europa.eu/service/data/{flujo}/{serie}?format=csvdata&startPeriod={desde}"
+    import csv, io
+    out = []
+    for fila in csv.DictReader(io.StringIO(_get(url))):
+        try:
+            out.append((fila["TIME_PERIOD"], round(float(fila["OBS_VALUE"]), 4)))
+        except (KeyError, ValueError):
+            pass
+    return out
+
+
+def derivar(series: dict) -> None:
+    for clave, (a, b), *_ in DERIVADAS:
+        if a in series and b in series:
+            mb = dict(series[b])
+            series[clave] = [(f, round(v - mb[f], 4)) for f, v in series[a] if f in mb]
+
+
+def descargar_tipos() -> tuple[dict, dict]:
+    desde = (date.today() - timedelta(days=3 * 365)).isoformat()
+    series = {}
+    for clave, fuente, codigo, *_ in TIPOS:
+        try:
+            datos = _fred(codigo, desde) if fuente == "fred" else _bce(codigo, desde)
+            if datos:
+                series[clave] = datos
+            else:
+                print(f"  aviso: sin datos para {clave} ({codigo})", file=sys.stderr)
+        except Exception as e:  # una fuente caída no debe tumbar el panel
+            print(f"  aviso: fallo al descargar {clave} ({codigo}): {e}", file=sys.stderr)
+    derivar(series)
+    proy = {}
+    try:
+        anio = date.today().year
+        proy["anual"] = [(f[:4], v) for f, v in _fred(PROYECCIONES_FED[0], None) if int(f[:4]) >= anio]
+        lr = _fred(PROYECCIONES_FED[1], None)
+        proy["largo"] = lr[-1][1] if lr else None
+        proy["fecha"] = lr[-1][0] if lr else None
+    except Exception as e:
+        print(f"  aviso: sin proyecciones del FOMC: {e}", file=sys.stderr)
+    return series, proy
+
+
+def meta_tipos() -> dict:
+    meta = {}
+    for clave, _, codigo, nombre, tipo, inv in TIPOS:
+        fuente = f"FRED · {codigo}" if codigo.isalnum() else "BCE · curva de tipos " + ("AAA" if "G_N_A" in codigo else "todos los ratings")
+        meta[clave] = {"nombre": nombre, "tipo": tipo, "inv": inv, "fuente": fuente}
+    for clave, _, nombre, tipo, inv in DERIVADAS:
+        meta[clave] = {"nombre": nombre, "tipo": tipo, "inv": inv, "fuente": "Calculada con la curva del BCE"}
+    return meta
+
+
+def demo_tipos() -> tuple[dict, dict]:
+    rnd = random.Random(7)
+    fechas = [f.isoformat() for f in dias_habiles(date.today() - timedelta(days=1), 750)]
+    base = {"FED_TECHO": 4.0, "FED_SUELO": 3.75, "EFFR": 3.87, "UST1A": 3.55, "UST2A": 3.45,
+            "UST10A": 4.15, "US2S10S": 0.7, "BCE_DEPO": 2.0, "ESTR": 1.92, "EUR1A": 1.85,
+            "EUR2A": 1.95, "EUR10A": 2.55, "EURTODOS10A": 3.05, "OAS_US_IG": 0.85,
+            "OAS_US_HY": 3.1, "OAS_EU_HY": 3.2, "OAS_EM": 1.9}
+    series = {}
+    for clave, *_ in TIPOS:
+        n, pts = base[clave] + 1.0, []
+        oficial = clave in ("FED_TECHO", "FED_SUELO", "BCE_DEPO")
+        for i, f in enumerate(fechas):
+            if oficial:
+                n = base[clave] + 1.0 - 0.25 * min(4, i // 150)
+            else:
+                n = max(0.2, n + rnd.gauss(-0.0013, 0.03 if "OAS" not in clave else 0.02))
+            pts.append((f, round(n, 4)))
+        series[clave] = pts
+    derivar(series)
+    proy = {"anual": [(str(date.today().year), 3.6), (str(date.today().year + 1), 3.4),
+                      (str(date.today().year + 2), 3.1)], "largo": 3.0, "fecha": "ejemplo"}
+    return series, proy
+
+
+# --------------------------------------------------------------------------
 # Datos de demostración (sintéticos)
 # --------------------------------------------------------------------------
 def dias_habiles(fin: date, n: int) -> list[date]:
@@ -348,6 +486,9 @@ def main() -> None:
     tickers, meta = tickers_necesarios()
     print(f"{len(tickers)} tickers")
     series = generar_demo(tickers, meta) if args.demo else descargar(tickers)
+    s_tipos, proyecciones = demo_tipos() if args.demo else descargar_tipos()
+    series.update(s_tipos)
+    meta.update(meta_tipos())
     if not series:
         sys.exit("No se ha podido descargar ningún dato.")
     faltan = [t for t in tickers if t not in series]
@@ -355,6 +496,7 @@ def main() -> None:
         print("Sin datos:", ", ".join(faltan), file=sys.stderr)
 
     datos = construir(series, meta, args.demo)
+    datos["proyeccionesFed"] = proyecciones
     plantilla = PLANTILLA.read_text(encoding="utf-8")
     if MARCA not in plantilla:
         sys.exit("La plantilla no contiene la marca de datos.")

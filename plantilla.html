@@ -181,6 +181,17 @@ table.heat.fondos { min-width: 820px; }
 .fcard-head h3 { margin: 0; font-size: 14px; }
 .fcard-num { text-align: right; flex: none; }
 .fcard-num b { font-size: 17px; display: block; }
+.cb-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.cb-rate { font-family: var(--font-display); font-size: 30px; font-weight: 700; margin: 0; line-height: 1.1; }
+.cb-side { text-align: right; display: grid; }
+.cb-side b { font-size: 17px; }
+.kv2 { grid-template-columns: 1fr 1fr; }
+.kv2 em { display: block; font-style: normal; font-size: 11.5px; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; padding: 4px 9px; border-radius: 999px; background: var(--sunken); }
+.chip b { font-weight: 600; margin-right: 4px; }
+table.heat tr.sep td { background: var(--sunken); cursor: default; }
+table.heat tr.sep td .c { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; color: var(--muted); padding-block: 6px; }
 footer { color: var(--muted); font-size: 12px; padding-block: 0 32px; }
 footer p { margin: 4px 0; max-width: 90ch; }
 
@@ -209,6 +220,7 @@ footer p { margin: 4px 0; max-width: 90ch; }
 <main class="gutter"><div class="wrap" id="view" style="display:grid;gap:28px"></div></main>
 
 <footer class="gutter"><div class="wrap">
+  <p>Tipos y diferenciales de crédito: FRED (Reserva Federal de St. Louis, índices ICE BofA) y curva de tipos del BCE.</p>
   <p>Cierres diarios de Yahoo Finance, ajustados por dividendos en ETFs. Índices europeos en divisa local. Rentabilidades de bonos en puntos básicos.</p>
   <p>Mapa de rotación: eje horizontal = rentabilidad a 3 meses frente a la referencia; eje vertical = rentabilidad a 1 mes frente a la referencia. La cola marca la posición de las últimas 4 semanas.</p>
 </div></footer>
@@ -236,7 +248,9 @@ try { const p = localStorage.getItem("pm-period"); if (PERIODS.some(x => x.id ==
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const nf = (v, d = 2) => v.toLocaleString("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d });
 const dir = v => v == null || isNaN(v) ? "flat" : v > 0 ? "up" : v < 0 ? "down" : "flat";
-const isYield = t => D.meta[t] && D.meta[t].tipo === "rend";
+const isYield = t => !!D.meta[t] && ["rend", "tasa", "spread"].includes(D.meta[t].tipo);
+const isSpread = t => !!D.meta[t] && D.meta[t].tipo === "spread";
+const isInv = t => !!D.meta[t] && !!D.meta[t].inv;
 function fmtChange(t, v) {
   if (v == null || isNaN(v)) return "–";
   if (isYield(t)) return (v > 0 ? "+" : "") + nf(v, 0) + " pb";
@@ -244,6 +258,7 @@ function fmtChange(t, v) {
 }
 function fmtLevel(t, v) {
   if (v == null) return "–";
+  if (isSpread(t)) return nf(v * 100, 0) + " pb";
   if (isYield(t)) return nf(v, 2) + "%";
   if (v < 10) return nf(v, 4);
   if (v >= 10000) return nf(v, 0);
@@ -300,7 +315,8 @@ function heat(t, v, pid) {
   const cap = isYield(t) ? p.capBp : p.cap;
   const k = Math.min(1, Math.abs(v) / cap);
   const pct = Math.round(6 + k * 50);
-  return `background:color-mix(in srgb, var(${v >= 0 ? "--pos" : "--neg"}) ${pct}%, var(--surface))`;
+  const good = isInv(t) ? v <= 0 : v >= 0;
+  return `background:color-mix(in srgb, var(${good ? "--pos" : "--neg"}) ${pct}%, var(--surface))`;
 }
 
 /* ---------- SVG ---------- */
@@ -310,7 +326,7 @@ function spark(t, n = 63, w = 120, h = 30) {
   const lo = Math.min(...c), hi = Math.max(...c), span = hi - lo || 1;
   const pts = c.map((v, i) => [i / (c.length - 1) * (w - 4) + 2, h - 3 - (v - lo) / span * (h - 6)]);
   const d = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join("");
-  const col = c[c.length - 1] >= c[0] ? "var(--pos)" : "var(--neg)";
+  const col = (c[c.length - 1] >= c[0]) !== isInv(t) ? "var(--pos)" : "var(--neg)";
   const e = pts[pts.length - 1];
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><path d="${d} L${e[0].toFixed(1)} ${h} L2 ${h}Z" fill="${col}" fill-opacity="0.1"/><path d="${d}" fill="none" stroke="${col}" stroke-width="1.5" stroke-linejoin="round"/><circle cx="${e[0].toFixed(1)}" cy="${e[1].toFixed(1)}" r="2.2" fill="${col}"/></svg>`;
 }
@@ -496,6 +512,79 @@ function renderGroup(g) {
 }
 
 
+
+/* ---------- tipos y crédito ---------- */
+function lastVal(t) { const s = D.series[t]; return s && s.c.length ? { v: s.c[s.c.length - 1], f: s.f[s.f.length - 1] } : null; }
+function lastMove(t) {
+  const s = D.series[t]; if (!s) return null;
+  for (let i = s.c.length - 1; i > 0; i--) if (Math.abs(s.c[i] - s.c[i - 1]) > 0.001) return { f: s.f[i], d: (s.c[i] - s.c[i - 1]) * 100 };
+  return null;
+}
+function percentile(t) {
+  const s = D.series[t]; if (!s || s.c.length < 60) return null;
+  const last = s.c[s.c.length - 1];
+  return { p: Math.round(s.c.filter(v => v <= last).length / s.c.length * 100), desde: s.f[0].slice(0, 4) };
+}
+const shortDate = f => new Date(f + "T12:00:00Z").toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+function multiLine(keys, n, opts) {
+  const ok = keys.filter(k => D.series[k.t]); if (!ok.length) return "";
+  const base = D.series[ok[0].t], f = base.f.slice(-n);
+  const series = ok.map(k => {
+    const m = new Map(D.series[k.t].f.map((d, i) => [d, D.series[k.t].c[i]]));
+    let prev = null;
+    return { v: f.map(d => { const x = m.get(d); if (x != null) prev = x; return prev == null ? null : prev * (opts.scale || 1); }), color: k.color, width: k.width || 1.6, dash: k.dash };
+  });
+  return lineChart(f, series, opts) + `<div class="legend">${ok.map(k => `<span><i style="background:${k.color}"></i>${esc(k.label || D.meta[k.t].nombre)}</span>`).join("")}</div>`;
+}
+function bancoCard(c) {
+  const ofi = lastVal(c.oficial), on = lastVal(c.overnight); if (!ofi || !on) return "";
+  const mv = lastMove(c.oficial);
+  const gap = k => { const x = lastVal(k); return x ? (x.v - on.v) * 100 : null; };
+  const g1 = gap(c.a1), g2 = gap(c.a2);
+  const lectura = v => v == null ? "–" : v < -10 ? "descuenta bajadas" : v > 10 ? "descuenta subidas" : "sin cambios relevantes";
+  const nivel = c.suelo ? `${nf(lastVal(c.suelo).v, 2)}–${nf(ofi.v, 2)}%` : `${nf(ofi.v, 2)}%`;
+  const proy = c.proy && c.proy.anual && c.proy.anual.length ? `<div class="chips">${c.proy.anual.map(([y, v]) => `<span class="chip"><b>${esc(y)}</b> ${nf(v, 2)}%</span>`).join("")}${c.proy.largo != null ? `<span class="chip"><b>Largo plazo</b> ${nf(c.proy.largo, 2)}%</span>` : ""}</div><p class="note">Mediana de las proyecciones del FOMC (dot plot) para el cierre de cada año.</p>` : "";
+  return `<div class="panel card">
+    <div class="cb-head"><div><p class="eyebrow">${esc(c.nombre)}</p><p class="cb-rate">${nivel}</p><p class="sub">${esc(c.etiqueta)}${mv ? ` · última decisión: ${mv.d < 0 ? "bajada" : "subida"} de ${nf(Math.abs(mv.d), 0)} pb el ${esc(shortDate(mv.f))}` : ""}</p></div>
+      <div class="cb-side"><span class="sub">${esc(D.meta[c.overnight].nombre)}</span><b>${nf(on.v, 2)}%</b></div></div>
+    <div class="kv kv2">
+      <div><span>Tipo a 1 año vs ${esc(c.onCorto)}</span><b class="${dir(-(g1 ?? 0))}">${g1 == null ? "–" : (g1 > 0 ? "+" : "") + nf(g1, 0) + " pb"}</b><em>${lectura(g1)}</em></div>
+      <div><span>Tipo a 2 años vs ${esc(c.onCorto)}</span><b class="${dir(-(g2 ?? 0))}">${g2 == null ? "–" : (g2 > 0 ? "+" : "") + nf(g2, 0) + " pb"}</b><em>${lectura(g2)}</em></div>
+    </div>
+    ${multiLine([{ t: c.oficial, color: "var(--ink)", width: 2 }, { t: c.a1, color: "var(--accent)" }, { t: c.a2, color: "var(--warn)", dash: "4 3" }], 504, { h: 190, label: "Tipo oficial y tipos de mercado", fmt: v => nf(v, 2) + "%" })}
+    ${proy}
+  </div>`;
+}
+function renderTipos(g) {
+  const pid = state.period;
+  const P = D.proyeccionesFed || {};
+  const cards = bancoCard({ nombre: "Reserva Federal", etiqueta: "Rango objetivo de fed funds", oficial: "FED_TECHO", suelo: "FED_SUELO", overnight: "EFFR", onCorto: "efectivo", a1: "UST1A", a2: "UST2A", proy: P })
+    + bancoCard({ nombre: "Banco Central Europeo", etiqueta: "Facilidad de depósito", oficial: "BCE_DEPO", overnight: "ESTR", onCorto: "€STR", a1: "EUR1A", a2: "EUR2A" });
+  const bloques = [
+    ["Crédito", ["OAS_US_IG", "OAS_US_HY", "OAS_EU_HY", "OAS_EM", "EUR_SOBERANO"]],
+    ["Pendiente de la curva", ["US2S10S", "EUR2S10S"]],
+    ["Tipos de mercado", ["UST2A", "UST10A", "EUR2A", "EUR10A"]],
+  ];
+  const rows = bloques.map(([titulo, ks]) => {
+    const r = ks.filter(k => D.series[k]).map(t => {
+      const m = metrics(t), pc = percentile(t);
+      return `<tr data-t="${esc(t)}" tabindex="0"><td><span class="c"><span class="nm">${esc(D.meta[t].nombre)}</span><span class="tk">${esc(D.meta[t].fuente || t)}</span></span></td>
+        <td><span class="c">${spark(t, 126, 96, 26)}</span></td><td><span class="c"><b>${fmtLevel(t, m.last)}</b></span></td>
+        ${PERIODS.map(p => `<td class="hm"><span class="c" style="${heat(t, m.r[p.id], p.id)}">${fmtChange(t, m.r[p.id])}</span></td>`).join("")}
+        <td><span class="c">${pc ? `<b>P${pc.p}</b><span class="tk" style="display:block">desde ${pc.desde}</span>` : "–"}</span></td></tr>`;
+    }).join("");
+    return r ? `<tr class="sep"><td colspan="${PERIODS.length + 4}"><span class="c">${titulo}</span></td></tr>${r}` : "";
+  }).join("");
+  const table = `<div class="panel table-wrap"><table class="heat"><thead><tr><th>Serie</th><th>6 meses</th><th>Nivel</th>${PERIODS.map(p => `<th>${p.label}</th>`).join("")}<th>Percentil</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const pb = v => nf(v, 0);
+  const grafs = `<div class="grid2">
+    <div class="panel card"><div><h3>Diferenciales investment grade</h3><p class="sub">En puntos básicos, últimos 2 años.</p></div>${multiLine([{ t: "OAS_US_IG", color: "var(--accent)" }, { t: "OAS_EM", color: "var(--warn)" }, { t: "EUR_SOBERANO", color: "var(--muted)", dash: "4 3" }], 504, { h: 200, scale: 100, label: "Diferenciales investment grade", fmt: pb })}</div>
+    <div class="panel card"><div><h3>Diferenciales high yield</h3><p class="sub">En puntos básicos, últimos 2 años.</p></div>${multiLine([{ t: "OAS_US_HY", color: "var(--neg)" }, { t: "OAS_EU_HY", color: "var(--accent)" }], 504, { h: 200, scale: 100, label: "Diferenciales high yield", fmt: pb })}</div>
+  </div>`;
+  view.innerHTML = `<section class="block"><div class="block-head"><div><h2>Bancos centrales</h2><p class="sub">Tipo oficial y lo que descuenta el mercado: si la rentabilidad a 1 y 2 años está por debajo del tipo a un día, el mercado espera bajadas de tipos (y al revés). Es una lectura aproximada; incluye prima por plazo.</p></div></div><div class="grid2">${cards}</div></section>
+    <section class="block"><div class="block-head"><div><h2>Crédito, curvas y tipos</h2><p class="sub">Variaciones en puntos básicos. En crédito, verde es estrechamiento del diferencial y rojo ampliación. El percentil compara el nivel actual con todo el histórico disponible.</p></div>${periodPicker()}</div>${table}${grafs}</section>`;
+}
+
 /* ---------- fondos frente a su índice ---------- */
 const DIFF_CAP = { "1d": 0.5, "1s": 1, "1m": 2, "3m": 4, "ytd": 6, "1a": 8 };
 function fundOf(t) { for (const g of D.grupos) for (const fd of (g.fondos || [])) if (fd.t === t) return fd; return null; }
@@ -576,7 +665,7 @@ function openSheet(t) {
     { v: s.c.slice(from), color: "var(--accent)", width: 1.8 },
     { v: sm(50), color: "var(--warn)", width: 1.2 },
     { v: sm(200), color: "var(--muted)", width: 1.2, dash: "4 3" },
-  ], { area: true, label: "Precio", fmt: isYield(t) ? v => nf(v, 2) + "%" : null });
+  ], { area: true, label: "Precio", fmt: isSpread(t) ? v => nf(v * 100, 0) : isYield(t) ? v => nf(v, 2) + "%" : null });
   const g = groupOf(t), fd = fundOf(t);
   const refT = fd ? fd.ref : g && g.ref;
   const refName = fd ? (fd.proxy || fd.indice) : refT && (D.meta[refT]?.nombre || refT);
@@ -616,7 +705,7 @@ function current() { const h = location.hash.slice(1); return D.grupos.find(g =>
 function render() {
   const g = current();
   document.getElementById("tabs").innerHTML = D.grupos.map(x => `<a href="#${x.id}" ${x.id === g.id ? 'aria-current="page"' : ""}>${esc(x.nombre)}</a>`).join("");
-  if (g.id === "resumen") renderResumen(); else if (g.fondos && g.fondos.length) renderFondos(g); else renderGroup(g);
+  if (g.id === "resumen") renderResumen(); else if (g.id === "tipos") renderTipos(g); else if (g.fondos && g.fondos.length) renderFondos(g); else renderGroup(g);
 }
 function header() {
   const ref = D.series["SPY"] ? "SPY" : Object.keys(D.series)[0];
